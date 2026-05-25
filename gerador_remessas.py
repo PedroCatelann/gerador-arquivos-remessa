@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Gerador de Remessas SQL Server
-Automatiza a consolidacao de scripts T-SQL em arquivos de remessa padronizados.
-"""
-
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -52,9 +46,6 @@ FOLDER_MAPPING = {
 
 CONFIG_FILE = "config.json"
 
-# Versão registrada no INSERT de controle (padrão VX.X.X)
-VERSAO_SISTEMA = "V5.0.1"
-
 # Arquivo que NÃO recebe o rodapé de controle de versão
 VERSAO_FOOTER_EXCLUDE = "001_MENU_DIMP.sql"
 
@@ -95,7 +86,7 @@ class Logger:
 
 
 # ─────────────────────────────────────────────────────────────────
-# Configuração externa (opcional)
+# Configuração externa
 # ─────────────────────────────────────────────────────────────────
 
 def load_config() -> dict:
@@ -194,12 +185,17 @@ def build_script_block(filename: str, content: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────
-# Leitura segura de arquivos
+# Leitura de arquivos
 # ─────────────────────────────────────────────────────────────────
+
+def strip_use_go(content: str) -> str:
+    """Remove declarações USE <db> / GO dos arquivos individuais."""
+    return re.sub(r"(?im)^\s*USE\s+\S+\r?\n\s*GO[ \t]*\r?\n?", "", content)
+
 
 def read_sql_file(path: Path, logger: "Logger") -> Optional[str]:
     # Tenta múltiplos encodings para compatibilidade
-    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
         try:
             return path.read_text(encoding=encoding)
         except UnicodeDecodeError:
@@ -248,7 +244,7 @@ def process_folder(
         return None
 
     mapping    = FOLDER_MAPPING[folder_name]
-    output_dir = output_base / mapping["output_dir"]
+    output_dir = output_base / mapping["output_dir"] / "scripts"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / mapping["output_file"]
     database    = mapping["database"]
@@ -263,7 +259,7 @@ def process_folder(
         content = read_sql_file(sql_path, logger)
         if content is None:
             continue
-        blocks.append(build_script_block(sql_path.name, content))
+        blocks.append(build_script_block(sql_path.name, strip_use_go(content)))
         compiled += 1
 
     if mapping["output_file"] != VERSAO_FOOTER_EXCLUDE:
