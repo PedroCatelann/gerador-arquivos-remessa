@@ -13,42 +13,27 @@ import json
 
 FOLDER_MAPPING = {
     "Tabelas": {
-        "output_file": "001_TAB_PM.sql",
-        "database":    "AB_DIMP",
-        "output_dir":  "01_AB_DIMP",
+        "output_file": "001_TAB_",
     },
     "Cargas": {
-        "output_file": "003_CARGA_PM.sql",
-        "database":    "AB_DIMP",
-        "output_dir":  "01_AB_DIMP",
+        "output_file": "003_CARGA_",
     },
     "Views": {
-        "output_file": "031_VW_PM.sql",
-        "database":    "AB_DIMP",
-        "output_dir":  "01_AB_DIMP",
+        "output_file": "031_VW_",
     },
     "Functions": {
-        "output_file": "041_FN_PM.sql",
-        "database":    "AB_DIMP",
-        "output_dir":  "01_AB_DIMP",
+        "output_file": "041_FN_",
     },
     "Procedures": {
-        "output_file": "051_PR_PM.sql",
-        "database":    "AB_DIMP",
-        "output_dir":  "01_AB_DIMP",
+        "output_file": "051_PR_",
     },
     "Controles": {
-        "output_file": "001_MENU_DIMP.sql",
+        "output_file": "001_MENU_",
         "database":    "AB_CONTROLE",
-        "output_dir":  "02_AB_CONTROLE",
     },
 }
 
 CONFIG_FILE = "config.json"
-
-# Arquivo que NÃO recebe o rodapé de controle de versão
-VERSAO_FOOTER_EXCLUDE = "001_MENU_DIMP.sql"
-
 
 # ─────────────────────────────────────────────────────────────────
 # Logger
@@ -160,12 +145,12 @@ def build_file_header(database: str) -> str:
     )
 
 
-def build_file_footer(output_filename: str, versao: str) -> str:
+def build_file_footer(output_filename: str, versao: str, sistema_sigla: str) -> str:
     dash = "-" * 104
     return (
         f"{dash}\n"
         f"INSERT INTO VERSAO_SISTEMA (CODSISTEMA, VERSAO, NOMESCRIPT, CODUSUARIO, DATATU)\n"
-        f"VALUES ('PM', '{versao}','{output_filename}', HOST_NAME(), GETDATE())\n"
+        f"VALUES ('{sistema_sigla}', '{versao}','{output_filename}', HOST_NAME(), GETDATE())\n"
         f"GO\n"
         f"{dash}\n"
     )
@@ -235,7 +220,9 @@ def process_folder(
     folder_name: str,
     output_base: Path,
     logger: "Logger",
-    versao: str = VERSAO_SISTEMA,
+    versao: str,
+    database_name: str,
+    sistema_sigla: str
 ) -> Optional[dict]:
     sql_files = sorted(folder_path.glob("*.sql"))
 
@@ -243,11 +230,21 @@ def process_folder(
         logger.warn(f'Pasta "{folder_name}" encontrada, mas sem arquivos .sql')
         return None
 
-    mapping    = FOLDER_MAPPING[folder_name]
-    output_dir = output_base / mapping["output_dir"] / "scripts"
+    mapping      = FOLDER_MAPPING[folder_name]
+    is_controle  = "database" in mapping
+
+    if is_controle:
+        out_dir_name    = "02_AB_CONTROLE"
+        database        = mapping["database"]
+        output_filename = f"{mapping['output_file']}{sistema_sigla}.sql"
+    else:
+        out_dir_name    = f"01_{database_name}"
+        database        = database_name
+        output_filename = f"{mapping['output_file']}{sistema_sigla}.sql"
+
+    output_dir = output_base / out_dir_name / "scripts"
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = output_dir / mapping["output_file"]
-    database    = mapping["database"]
+    output_file = output_dir / output_filename
 
     logger.ok(f'Pasta "{folder_name}" encontrada — {len(sql_files)} arquivo(s) .sql')
 
@@ -262,8 +259,8 @@ def process_folder(
         blocks.append(build_script_block(sql_path.name, strip_use_go(content)))
         compiled += 1
 
-    if mapping["output_file"] != VERSAO_FOOTER_EXCLUDE:
-        blocks.append(build_file_footer(mapping["output_file"], versao))
+    if not is_controle:
+        blocks.append(build_file_footer(output_filename, versao, sistema_sigla))
 
     try:
         output_file.write_text("".join(blocks), encoding="utf-8")
@@ -274,13 +271,35 @@ def process_folder(
         logger.error(f"Erro ao escrever {output_file}: {e}")
         return None
 
-    logger.ok(f'{compiled} arquivo(s) compilados em {mapping["output_file"]}')
+    logger.ok(f'{compiled} arquivo(s) compilados em {output_filename}')
     return {"folder": folder_name, "file": str(output_file), "count": compiled}
 
 
 # ─────────────────────────────────────────────────────────────────
 # Entrada do usuário
 # ─────────────────────────────────────────────────────────────────
+
+def get_database_name() -> str:
+    while True:
+        raw = input("Informe o nome do banco de dados (ex: AB_DIMP): ").strip()
+        if not raw:
+            print("[ERR ] Nome do banco nao pode ser vazio.\n")
+            continue
+        if re.search(r"\s", raw):
+            print("[ERR ] Nome do banco nao pode conter espacos.\n")
+            continue
+        return raw
+
+def get_sistema_sigla() -> str:
+    while True:
+        raw = input("Informe a sigla do sistema (ex: PM): ").strip().upper()
+        if not raw:
+            print("[ERR ] Sigla do sistema nao pode ser vazia.\n")
+            continue
+        if re.search(r"\s", raw):
+            print("[ERR ] Sigla do sistema nao pode conter espacos.\n")
+            continue
+        return raw
 
 def get_version() -> str:
     pattern = re.compile(r"^V\d+\.\d+\.\d+$")
@@ -327,6 +346,8 @@ def main():
     logger = Logger()
     source_path = get_source_path()
     versao = get_version()
+    database_name = get_database_name()
+    sistema_sigla = get_sistema_sigla()
     output_base = source_path / "database"
 
     if output_base.exists():
@@ -346,7 +367,7 @@ def main():
             continue
 
         found_any = True
-        result = process_folder(folder_path, folder_name, output_base, logger, versao)
+        result = process_folder(folder_path, folder_name, output_base, logger, versao, database_name, sistema_sigla)
         if result:
             generated.append(result)
         print()
